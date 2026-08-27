@@ -1,26 +1,25 @@
-import telebot
 import os
+import telebot
 import time
 import random
 import string
 import logging
 import threading
 import requests
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from supabase import create_client
-import jdatetime
 
-# نصب خودکار کتابخانه‌های مورد نیاز
-def install_package(package):
-    try:
-        __import__(package)
-    except ImportError:
-        print(f"📦 در حال نصب {package}...")
-        os.system(f"pip install {package}")
-        print(f"✅ {package} نصب شد!")
-
-install_package("jdatetime")
+# نصب خودکار jdatetime
+try:
+    import jdatetime
+except ImportError:
+    print("📦 در حال نصب jdatetime...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "jdatetime"])
+    import jdatetime
+    print("✅ jdatetime نصب شد!")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,21 +29,34 @@ logging.basicConfig(
 log = logging.getLogger("VpnIrBot")
 
 # ============================================================
-# تنظیمات اولیه
+# تنظیمات اولیه (با پشتیبانی از متغیرهای محیطی)
 # ============================================================
-TOKEN = "8611627525:AAEgDRKFC7-S6dOpv7tKMI8XLl7aveWgBK8"
+TOKEN = os.getenv("TOKEN", "8611627525:AAEgDRKFC7-S6dOpv7tKMI8XLl7aveWgBK8")
 ADMIN_ID = 8356825459
 CHANNEL_ID = "@Vpn_IRan140"
 CHANNEL_LINK = "https://t.me/Vpn_IRan140"
 WEBSITE = "https://vpnir.netlify.app"
 SUPPORT_ID = "@ad_vpnir"
-OPENROUTER_KEY = "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"
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "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")
 
-SUPABASE_URL = "https://oeicsokgyrirjiufwjnf.supabase.co"
-SUPABASE_KEY = "sb_secret_FDvEW7x6VWaPbTIfyNNyjQ_V6aIg2Sk"
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://oeicsokgyrirjiufwjnf.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_secret_5iUxVibN1fKdr-YCp96Wlg_3w8EmiuQ")
 
-db = create_client(SUPABASE_URL, SUPABASE_KEY)
+# تست اتصال به Supabase
+print(f"🔑 تلاش برای اتصال به Supabase...")
+print(f"📡 URL: {SUPABASE_URL}")
+print(f"🔐 KEY: {SUPABASE_KEY[:20]}...")
 
+try:
+    db = create_client(SUPABASE_URL, SUPABASE_KEY)
+    test = db.table("app_users").select("*").limit(1).execute()
+    print("✅ اتصال به Supabase برقرار شد!")
+except Exception as e:
+    print(f"⚠️ خطا در اتصال به Supabase: {e}")
+
+# ============================================================
+# ادامه تنظیمات
+# ============================================================
 CARD_NUMBER = "6280231392863212"
 CARD_OWNER = "امیرحسین صراف زاده"
 BANK_NAME = "بانک مسکن"
@@ -61,7 +73,6 @@ _discount_builder = {}
 # توابع کمکی تاریخ
 # ============================================================
 def to_jalali(date_str):
-    """تبدیل تاریخ میلادی به شمسی با فرمت سال/ماه/روز ساعت:دقیقه:ثانیه"""
     try:
         dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         jalali = jdatetime.datetime.fromgregorian(datetime=dt)
@@ -70,7 +81,6 @@ def to_jalali(date_str):
         return date_str
 
 def now_jalali():
-    """تاریخ و زمان فعلی شمسی با فرمت سال/ماه/روز → ⏰ ساعت:دقیقه:ثانیه"""
     now = jdatetime.datetime.now()
     return f"{now.strftime('%Y/%m/%d')} → ⏰ {now.strftime('%H:%M:%S')}"
 
@@ -148,7 +158,10 @@ def get_user(telegram_id, force_refresh=False):
         res = db.table("app_users").select("*").eq("telegram_id", telegram_id).execute()
         user = res.data[0] if res.data else None
         if user:
-            user["user_level"] = "عادی"
+            if "user_level" not in user or not user["user_level"]:
+                user["user_level"] = "عادی"
+            if "is_active" not in user:
+                user["is_active"] = False
             _user_cache[telegram_id] = user
         return user
     except Exception as e:
@@ -192,6 +205,7 @@ def create_or_update_user(telegram_id, username, start_payload=None):
         "referral_code": code,
         "referred_by": referred_by,
         "is_banned": False,
+        "is_active": False,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     try:
@@ -355,7 +369,6 @@ def admin_keyboard():
     return keyboard
 
 def discount_management_keyboard():
-    """کیبورد مدیریت کد تخفیف"""
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("➕ ساخت کد جدید", callback_data="discount_create"),
@@ -435,6 +448,9 @@ def payment_method_keyboard(can_use_wallet):
     keyboard.add(InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="cancel_payment"))
     return keyboard
 
+# ============================================================
+# متن‌ها و اطلاعات ثابت
+# ============================================================
 FAQ_TEXT = f"""📋 <b>سوالات متداول</b>
 ━━━━━━━━━━━━━━
 
@@ -1154,13 +1170,16 @@ def show_my_orders(chat_id, user_id):
     bot.send_message(chat_id, text, parse_mode="HTML")
 
 # ============================================================
-# حساب من
+# حساب من با فعال‌سازی
 # ============================================================
 def show_my_account(chat_id, user_id):
     user = ensure_user_exists(user_id)
     if not user:
         bot.send_message(chat_id, "❌ خطا در دریافت اطلاعات. لطفاً /start رو بزن.")
         return
+
+    is_active = user.get("is_active", False)
+    status_text = "✅ فعال" if is_active else "🔴 غیرفعال"
 
     try:
         orders = db.table("orders").select("id, status").eq("telegram_id", user_id).execute().data
@@ -1183,7 +1202,7 @@ def show_my_account(chat_id, user_id):
 
     username = user.get("username") or "ندارد"
     phone_status = "🔴 ارسال نشده است 🔴"
-    user_group = "عادی"
+    user_group = user.get("user_level", "عادی")
 
     text = f"""🤖 اطلاعات حساب کاربری شما :
 
@@ -1196,13 +1215,118 @@ def show_my_account(chat_id, user_id):
 📑 تعداد فاکتورهای پرداخت‌شده: {orders_count} عدد
 🤝 تعداد زیرمجموعه‌های شما: {referral_count} نفر
 🔖 گروه کاربری: {user_group}
+🔐 وضعیت حساب: {status_text}
 
 
 
 
 📆 {now_jalali()}"""
 
-    bot.send_message(chat_id, text, parse_mode="HTML")
+    if not is_active:
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        keyboard.add(InlineKeyboardButton("🔑 فعال‌سازی حساب", callback_data=f"activate_account_{user_id}"))
+        bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        bot.send_message(chat_id, text, parse_mode="HTML")
+
+# ============================================================
+# فعال‌سازی حساب
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("activate_account_"))
+def activate_account(call):
+    user_id = int(call.data.replace("activate_account_", ""))
+    
+    if str(call.from_user.id) != str(user_id):
+        bot.answer_callback_query(call.id, "❌ این دکمه مال شما نیست!")
+        return
+    
+    bot.answer_callback_query(call.id, "🔑 در حال ارسال کد...")
+    
+    activation_code = str(random.randint(100000, 999999))
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    
+    try:
+        try:
+            db.table("activation_codes").delete().eq("telegram_id", user_id).execute()
+        except:
+            pass
+        
+        db.table("activation_codes").insert({
+            "telegram_id": user_id,
+            "code": activation_code,
+            "expires_at": expires_at,
+            "used": False
+        }).execute()
+        
+        bot.send_message(
+            user_id,
+            f"""🔑 <b>کد فعال‌سازی حساب</b>
+━━━━━━━━━━━━━━━━━━━━━
+
+کد فعال‌سازی شما (تا ۱۰ دقیقه معتبر است):
+
+<code>{activation_code}</code>
+
+━━━━━━━━━━━━━━━━━━━━━
+📌 کد رو در ربات وارد کن تا حساب شما فعال بشه.
+
+⚠️ این کد فقط ۱۰ دقیقه اعتبار دارد!""",
+            parse_mode="HTML"
+        )
+        
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"✅ کد فعال‌سازی به شما ارسال شد!\n\n"
+            f"🔑 کد: <code>{activation_code}</code>\n"
+            f"⏳ اعتبار: ۱۰ دقیقه\n\n"
+            f"📌 کد رو در ربات وارد کن:",
+            parse_mode="HTML"
+        )
+        
+        bot.register_next_step_handler(msg, verify_activation_code, user_id)
+        
+    except Exception as e:
+        log.error(f"خطا در ارسال کد فعال‌سازی: {e}")
+        bot.answer_callback_query(call.id, "❌ خطا در ارسال کد!")
+
+def verify_activation_code(message, user_id):
+    if str(message.from_user.id) != str(user_id):
+        bot.reply_to(message, "❌ این دستور مال شما نیست!")
+        return
+    
+    code = message.text.strip()
+    
+    try:
+        res = db.table("activation_codes").select("*").eq("telegram_id", user_id).eq("code", code).eq("used", False).execute()
+        
+        if not res.data:
+            bot.reply_to(message, "❌ کد فعال‌سازی نامعتبر یا منقضی شده است!\nلطفاً دوباره درخواست کد جدید بدهید.")
+            return
+        
+        activation = res.data[0]
+        expires_at = datetime.fromisoformat(activation["expires_at"].replace("Z", "+00:00"))
+        if expires_at < datetime.now(timezone.utc):
+            bot.reply_to(message, "❌ کد فعال‌سازی منقضی شده است!\nلطفاً دوباره درخواست کد جدید بدهید.")
+            return
+        
+        db.table("app_users").update({"is_active": True}).eq("telegram_id", user_id).execute()
+        db.table("activation_codes").update({"used": True}).eq("id", activation["id"]).execute()
+        
+        if user_id in _user_cache:
+            _user_cache[user_id]["is_active"] = True
+        
+        bot.reply_to(
+            message,
+            f"✅ <b>حساب شما با موفقیت فعال شد!</b> 🎉\n\n"
+            f"اکنون می‌توانید از تمام امکانات ربات استفاده کنید.",
+            parse_mode="HTML"
+        )
+        
+        send_home(message.chat.id, user_id, message.from_user.first_name)
+        
+    except Exception as e:
+        log.error(f"خطا در تایید کد فعال‌سازی: {e}")
+        bot.reply_to(message, "❌ خطا در فعال‌سازی حساب! دوباره تلاش کنید.")
 
 # ============================================================
 # پشتیبانی
@@ -1504,9 +1628,10 @@ def show_users_list(chat_id):
     for i, u in enumerate(users[:20], 1):
         status = "🚫" if u["is_banned"] else "✅"
         uname = u.get("username")
-        level = "عادی"
+        level = u.get("user_level", "عادی")
+        is_active = "✅" if u.get("is_active") else "🔴"
         created = to_jalali(u['created_at']) if u.get('created_at') else "—"
-        text += f"{i}. {status} <code>{u['telegram_id']}</code>" + (f" (@{uname})" if uname else "") + f" | 👛 {u['wallet_balance']:,} | 🏷 {level}\n📅 {created}\n"
+        text += f"{i}. {status} <code>{u['telegram_id']}</code>" + (f" (@{uname})" if uname else "") + f" | 👛 {u['wallet_balance']:,} | 🏷 {level} | {is_active}\n📅 {created}\n"
     bot.send_message(chat_id, text, parse_mode="HTML")
 
 def show_stats(chat_id):
@@ -1618,7 +1743,7 @@ def ask_user_level_target(message):
         bot.reply_to(message, "❌ کاربر پیدا نشد!")
         return
     
-    current_level = "عادی"
+    current_level = user.get("user_level", "عادی")
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("🟢 عادی", callback_data=f"setlevel_{target}_عادی"),
@@ -1677,7 +1802,6 @@ def set_user_level(call):
 # مدیریت موجودی کاربر (افزایش/کاهش/صفر کردن)
 # ============================================================
 def ask_wallet_manage_user(message):
-    """دریافت آیدی کاربر برای مدیریت موجودی"""
     if str(message.from_user.id) != str(ADMIN_ID):
         return
     if intercept_flow_restart(message):
@@ -1693,10 +1817,8 @@ def ask_wallet_manage_user(message):
         bot.reply_to(message, "❌ کاربر پیدا نشد!")
         return
     
-    # ذخیره آیدی کاربر برای مرحله بعد
     _discount_builder[message.from_user.id] = {"manage_user": int(target)}
     
-    # نمایش موجودی فعلی و گزینه‌های عملیات
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("➕ افزایش", callback_data=f"wallet_add_{target}"),
@@ -1714,15 +1836,19 @@ def ask_wallet_manage_user(message):
         parse_mode="HTML"
     )
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_add_"))
 def wallet_add_amount(call):
-    """دریافت مبلغ برای افزایش موجودی"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
     
-    target_id = int(call.data.replace("wallet_add_", ""))
+    # استخراج target_id از callback_data - format: wallet_add_123456
+    parts = call.data.split("_")
+    if len(parts) < 3:
+        bot.answer_callback_query(call.id, "❌ خطا در پردازش!")
+        return
+    target_id = int(parts[2])
+    
     user = get_user(target_id)
     if not user:
         bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
@@ -1730,7 +1856,6 @@ def wallet_add_amount(call):
     
     bot.answer_callback_query(call.id, "➕")
     
-    # ذخیره آیدی و نوع عملیات
     _discount_builder[call.from_user.id] = {
         "manage_user": target_id,
         "action": "add"
@@ -1746,15 +1871,19 @@ def wallet_add_amount(call):
     )
     bot.register_next_step_handler(msg, process_wallet_add)
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_sub_"))
 def wallet_sub_amount(call):
-    """دریافت مبلغ برای کاهش موجودی"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
     
-    target_id = int(call.data.replace("wallet_sub_", ""))
+    # استخراج target_id از callback_data - format: wallet_sub_123456
+    parts = call.data.split("_")
+    if len(parts) < 3:
+        bot.answer_callback_query(call.id, "❌ خطا در پردازش!")
+        return
+    target_id = int(parts[2])
+    
     user = get_user(target_id)
     if not user:
         bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
@@ -1762,7 +1891,6 @@ def wallet_sub_amount(call):
     
     bot.answer_callback_query(call.id, "➖")
     
-    # ذخیره آیدی و نوع عملیات
     _discount_builder[call.from_user.id] = {
         "manage_user": target_id,
         "action": "sub"
@@ -1778,7 +1906,6 @@ def wallet_sub_amount(call):
     )
     bot.register_next_step_handler(msg, process_wallet_sub)
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_zero_"))
 def wallet_zero_confirm(call):
     """تایید صفر کردن موجودی"""
@@ -1786,7 +1913,13 @@ def wallet_zero_confirm(call):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
     
-    target_id = int(call.data.replace("wallet_zero_", ""))
+    # استخراج target_id از callback_data - format: wallet_zero_123456
+    parts = call.data.split("_")
+    if len(parts) < 3:
+        bot.answer_callback_query(call.id, "❌ خطا در پردازش!")
+        return
+    target_id = int(parts[2])
+    
     user = get_user(target_id)
     if not user:
         bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
@@ -1821,7 +1954,6 @@ def wallet_zero_confirm(call):
         parse_mode="HTML"
     )
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_zero_confirm_"))
 def wallet_zero_execute(call):
     """اجرای صفر کردن موجودی"""
@@ -1829,7 +1961,13 @@ def wallet_zero_execute(call):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
     
-    target_id = int(call.data.replace("wallet_zero_confirm_", ""))
+    # استخراج target_id از callback_data - format: wallet_zero_confirm_123456
+    parts = call.data.split("_")
+    if len(parts) < 4:
+        bot.answer_callback_query(call.id, "❌ خطا در پردازش!")
+        return
+    target_id = int(parts[3])
+    
     user = get_user(target_id)
     if not user:
         bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
@@ -1841,7 +1979,6 @@ def wallet_zero_execute(call):
         bot.answer_callback_query(call.id, "❌ موجودی در حال حاضر صفر است!")
         return
     
-    # صفر کردن موجودی (کاهش به اندازه موجودی فعلی)
     new_balance = adjust_wallet(target_id, -current_balance, "admin_zero_wallet")
     
     if new_balance is not None:
@@ -1857,7 +1994,6 @@ def wallet_zero_execute(call):
             parse_mode="HTML"
         )
         
-        # ارسال پیام به کاربر
         try:
             bot.send_message(
                 target_id,
@@ -1871,9 +2007,7 @@ def wallet_zero_execute(call):
     else:
         bot.answer_callback_query(call.id, "❌ خطا!")
 
-
 def process_wallet_add(message):
-    """پردازش افزایش موجودی"""
     if str(message.from_user.id) != str(ADMIN_ID):
         return
     
@@ -1899,14 +2033,11 @@ def process_wallet_add(message):
         bot.register_next_step_handler(msg, process_wallet_add)
         return
     
-    # افزایش موجودی
     new_balance = adjust_wallet(target_id, amount, "admin_add_wallet")
     
     if new_balance is not None:
-        # حذف اطلاعات موقت
         del _discount_builder[message.from_user.id]
         
-        # ارسال پیام تایید به ادمین
         bot.reply_to(
             message,
             f"✅ <b>افزایش موجودی با موفقیت انجام شد!</b>\n\n"
@@ -1916,7 +2047,6 @@ def process_wallet_add(message):
             parse_mode="HTML"
         )
         
-        # ارسال پیام به کاربر
         try:
             bot.send_message(
                 target_id,
@@ -1930,9 +2060,7 @@ def process_wallet_add(message):
     else:
         bot.reply_to(message, "❌ خطا در افزایش موجودی!")
 
-
 def process_wallet_sub(message):
-    """پردازش کاهش موجودی"""
     if str(message.from_user.id) != str(ADMIN_ID):
         return
     
@@ -1968,14 +2096,11 @@ def process_wallet_sub(message):
         bot.register_next_step_handler(msg, process_wallet_sub)
         return
     
-    # کاهش موجودی
     new_balance = adjust_wallet(target_id, -amount, "admin_sub_wallet")
     
     if new_balance is not None:
-        # حذف اطلاعات موقت
         del _discount_builder[message.from_user.id]
         
-        # ارسال پیام تایید به ادمین
         bot.reply_to(
             message,
             f"✅ <b>کاهش موجودی با موفقیت انجام شد!</b>\n\n"
@@ -1985,7 +2110,6 @@ def process_wallet_sub(message):
             parse_mode="HTML"
         )
         
-        # ارسال پیام به کاربر
         try:
             bot.send_message(
                 target_id,
@@ -1999,12 +2123,10 @@ def process_wallet_sub(message):
     else:
         bot.reply_to(message, "❌ خطا در کاهش موجودی!")
 
-
 # ============================================================
 # مدیریت کد تخفیف
 # ============================================================
 def show_discount_menu(chat_id):
-    """نمایش منوی مدیریت کد تخفیف"""
     bot.send_message(
         chat_id,
         "🏷 <b>مدیریت کدهای تخفیف</b>\n\n"
@@ -2015,7 +2137,6 @@ def show_discount_menu(chat_id):
 
 @bot.callback_query_handler(func=lambda call: call.data == "discount_create")
 def discount_create_start(call):
-    """شروع فرآیند ساخت کد تخفیف"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
@@ -2043,7 +2164,6 @@ def discount_create_start(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("discount_plan_"))
 def discount_select_plan(call):
-    """انتخاب پلن برای کد تخفیف"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
@@ -2074,7 +2194,6 @@ def discount_select_plan(call):
     bot.register_next_step_handler(msg, discount_get_percent, user_id)
 
 def discount_get_percent(message, user_id):
-    """دریافت درصد تخفیف"""
     if str(message.from_user.id) != str(ADMIN_ID):
         return
     
@@ -2107,7 +2226,6 @@ def discount_get_percent(message, user_id):
     bot.register_next_step_handler(msg, discount_get_days, user_id)
 
 def discount_get_days(message, user_id):
-    """دریافت مدت اعتبار کد تخفیف"""
     if str(message.from_user.id) != str(ADMIN_ID):
         return
     
@@ -2141,7 +2259,6 @@ def discount_get_days(message, user_id):
     bot.register_next_step_handler(msg, discount_get_max_uses, user_id)
 
 def discount_get_max_uses(message, user_id):
-    """دریافت حداکثر تعداد استفاده"""
     if str(message.from_user.id) != str(ADMIN_ID):
         return
     
@@ -2191,7 +2308,6 @@ def discount_get_max_uses(message, user_id):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("discount_confirm_"))
 def discount_confirm(call):
-    """تایید و ذخیره کد تخفیف در دیتابیس"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
@@ -2243,7 +2359,6 @@ def discount_confirm(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "discount_list")
 def discount_list(call):
-    """نمایش لیست کدهای تخفیف"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
@@ -2308,7 +2423,6 @@ def discount_list(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "discount_broadcast")
 def discount_broadcast_start(call):
-    """شروع ارسال اطلاع‌رسانی کد تخفیف"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
@@ -2353,7 +2467,6 @@ def discount_broadcast_start(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("broadcast_code_"))
 def discount_broadcast_send(call):
-    """ارسال اطلاع‌رسانی کد تخفیف به همه کاربران"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
@@ -2414,7 +2527,6 @@ def discount_broadcast_send(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("send_broadcast_"))
 def discount_broadcast_execute(call):
-    """اجرای ارسال اطلاع‌رسانی به همه کاربران"""
     if str(call.from_user.id) != str(ADMIN_ID):
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
         return
