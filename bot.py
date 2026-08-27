@@ -9,6 +9,18 @@ import requests
 from datetime import datetime, timedelta, timezone
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from supabase import create_client
+import jdatetime
+
+# نصب خودکار کتابخانه‌های مورد نیاز
+def install_package(package):
+    try:
+        __import__(package)
+    except ImportError:
+        print(f"📦 در حال نصب {package}...")
+        os.system(f"pip install {package}")
+        print(f"✅ {package} نصب شد!")
+
+install_package("jdatetime")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,6 +29,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("VpnIrBot")
 
+# ============================================================
+# تنظیمات اولیه
+# ============================================================
 TOKEN = "8611627525:AAEgDRKFC7-S6dOpv7tKMI8XLl7aveWgBK8"
 ADMIN_ID = 8356825459
 CHANNEL_ID = "@Vpn_IRan140"
@@ -26,7 +41,7 @@ SUPPORT_ID = "@ad_vpnir"
 OPENROUTER_KEY = "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"
 
 SUPABASE_URL = "https://oeicsokgyrirjiufwjnf.supabase.co"
-SUPABASE_KEY = "sb_secret_FY68ybbvXtMDZbUj-qWWVA_6NDvii2f"
+SUPABASE_KEY = "sb_secret_FDvEW7x6VWaPbTIfyNNyjQ_V6aIg2Sk"
 
 db = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -40,6 +55,24 @@ bot = telebot.TeleBot(TOKEN)
 user_conversations = {}
 _bot_username = None
 _checkout_cache = {}
+_discount_builder = {}
+
+# ============================================================
+# توابع کمکی تاریخ
+# ============================================================
+def to_jalali(date_str):
+    """تبدیل تاریخ میلادی به شمسی با فرمت سال/ماه/روز ساعت:دقیقه:ثانیه"""
+    try:
+        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        jalali = jdatetime.datetime.fromgregorian(datetime=dt)
+        return jalali.strftime("%Y/%m/%d %H:%M:%S")
+    except:
+        return date_str
+
+def now_jalali():
+    """تاریخ و زمان فعلی شمسی با فرمت سال/ماه/روز → ⏰ ساعت:دقیقه:ثانیه"""
+    now = jdatetime.datetime.now()
+    return f"{now.strftime('%Y/%m/%d')} → ⏰ {now.strftime('%H:%M:%S')}"
 
 def get_bot_username():
     global _bot_username
@@ -47,6 +80,7 @@ def get_bot_username():
         _bot_username = bot.get_me().username
     return _bot_username
 
+# قیمت‌ها و تنظیمات
 FRANCE_PRICE_PER_GB = 6000
 FRANCE_MIN_GB = 5
 FRANCE_MAX_GB = 200
@@ -114,6 +148,7 @@ def get_user(telegram_id, force_refresh=False):
         res = db.table("app_users").select("*").eq("telegram_id", telegram_id).execute()
         user = res.data[0] if res.data else None
         if user:
+            user["user_level"] = "عادی"
             _user_cache[telegram_id] = user
         return user
     except Exception as e:
@@ -168,7 +203,6 @@ def create_or_update_user(telegram_id, username, start_payload=None):
         return None
 
 def ensure_user_exists(telegram_id, username=None):
-    """اطمینان از وجود کاربر در دیتابیس — کش‌محور، فقط اگه واقعاً پیدا نشد به DB سر می‌زنه."""
     user = get_user(telegram_id)
     if not user:
         user = create_or_update_user(telegram_id, username)
@@ -206,7 +240,7 @@ def adjust_wallet(telegram_id, delta, reason, ref_order_id=None):
 # ============================================================
 # دیتابیس - کدهای تخفیف
 # ============================================================
-def check_discount_code(code):
+def check_discount_code(code, plan=None):
     try:
         res = db.table("discount_codes").select("*").eq("code", code.strip().upper()).execute()
         if not res.data:
@@ -315,7 +349,20 @@ def admin_keyboard():
     keyboard = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     keyboard.add("📋 سفارشات در انتظار", "👥 لیست کاربران")
     keyboard.add("📨 پیام همگانی", "📊 آمار فروش")
-    keyboard.add("🚫 بن/آنبن کاربر", "🔙 برگشت")
+    keyboard.add("🚫 بن/آنبن کاربر", "📤 تحویل سرور")
+    keyboard.add("⭐ تعیین سطح کاربر", "🏷 مدیریت کد تخفیف")
+    keyboard.add("💰 مدیریت موجودی", "🔙 برگشت")
+    return keyboard
+
+def discount_management_keyboard():
+    """کیبورد مدیریت کد تخفیف"""
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("➕ ساخت کد جدید", callback_data="discount_create"),
+        InlineKeyboardButton("📋 لیست کدها", callback_data="discount_list"),
+        InlineKeyboardButton("📤 ارسال به کاربران", callback_data="discount_broadcast"),
+        InlineKeyboardButton("🔙 برگشت", callback_data="back")
+    )
     return keyboard
 
 def vpn_keyboard():
@@ -509,6 +556,10 @@ ADMIN_WELCOME_TEXT = """👋 <b>سلام ادمین عزیز، خوش اومدی
 👥 مدیریت کاربران
 📨 پیام همگانی
 📊 آمار فروش
+📤 تحویل سرور
+⭐ تعیین سطح کاربر
+🏷 مدیریت کد تخفیف
+💰 مدیریت موجودی
 ━━━━━━━━━━━━━━
 
 از دکمه‌های پایین استفاده کن 👇"""
@@ -523,7 +574,8 @@ ALL_MENU_BUTTON_TEXTS = {
     "🛒 خرید VPN", "⭐ خرید استارز", "👛 کیف پول من", "🎁 رفرال من",
     "📦 سفارش‌های من", "📞 پشتیبانی", "👤 حساب من",
     "📋 سفارشات در انتظار", "👥 لیست کاربران", "📨 پیام همگانی",
-    "📊 آمار فروش", "🚫 بن/آنبن کاربر", "🔙 برگشت"
+    "📊 آمار فروش", "🚫 بن/آنبن کاربر", "📤 تحویل سرور", 
+    "⭐ تعیین سطح کاربر", "🏷 مدیریت کد تخفیف", "💰 مدیریت موجودی", "🔙 برگشت"
 }
 
 def intercept_flow_restart(message):
@@ -549,6 +601,9 @@ def intercept_flow_restart(message):
 
     return False
 
+# ============================================================
+# هندلرهای اصلی
+# ============================================================
 @bot.message_handler(commands=["start"])
 def start(message):
     user_id = message.from_user.id
@@ -606,6 +661,7 @@ def handle_buttons(message):
 
     is_admin = str(user_id) == str(ADMIN_ID)
 
+    # ====== بخش ادمین ======
     if message.text == "📋 سفارشات در انتظار" and is_admin:
         show_pending_orders(message.chat.id); return
     if message.text == "👥 لیست کاربران" and is_admin:
@@ -618,9 +674,20 @@ def handle_buttons(message):
     if message.text == "🚫 بن/آنبن کاربر" and is_admin:
         msg = bot.reply_to(message, "✏️ آیدی عددی کاربر رو بفرست:")
         bot.register_next_step_handler(msg, ask_ban_target); return
+    if message.text == "📤 تحویل سرور" and is_admin:
+        show_pending_deliveries(message.chat.id); return
+    if message.text == "⭐ تعیین سطح کاربر" and is_admin:
+        msg = bot.reply_to(message, "✏️ آیدی عددی کاربر رو بفرست:")
+        bot.register_next_step_handler(msg, ask_user_level_target); return
+    if message.text == "🏷 مدیریت کد تخفیف" and is_admin:
+        show_discount_menu(message.chat.id); return
+    if message.text == "💰 مدیریت موجودی" and is_admin:
+        msg = bot.reply_to(message, "✏️ آیدی عددی کاربر رو بفرست:")
+        bot.register_next_step_handler(msg, ask_wallet_manage_user); return
     if message.text == "🔙 برگشت" and is_admin:
         bot.reply_to(message, "🔙 برگشتی.", reply_markup=main_keyboard()); return
 
+    # ====== بخش کاربری ======
     if message.text == "🛒 خرید VPN":
         bot.reply_to(message, VPN_MENU_TEXT, reply_markup=vpn_keyboard(), parse_mode="HTML")
     elif message.text == "⭐ خرید استارز":
@@ -773,7 +840,8 @@ def apply_discount_code(message):
     if intercept_flow_restart(message):
         return
     code = (message.text or "").strip().upper()
-    discount, error = check_discount_code(code)
+    plan_key = cart.get("plan_key")
+    discount, error = check_discount_code(code, plan_key)
     if error:
         msg = bot.reply_to(message, f"{error}\n✏️ دوباره بنویس یا /skip برای رد کردن:")
         bot.register_next_step_handler(msg, apply_discount_code)
@@ -881,7 +949,7 @@ def buy_unlimited(call):
     user_id = call.from_user.id
     _checkout_cache[user_id] = {
         "kind": "unlimited", "product": "🚀 سرور نامحدود", "base_amount": UNLIMITED_PRICE,
-        "tracking_prefix": "UNL"
+        "tracking_prefix": "UNL", "plan_key": "unlimited"
     }
     safe_edit(call.message.chat.id, call.message.message_id,
               f"📦 <b>🚀 سرور نامحدود</b>\n💰 مبلغ پایه: {UNLIMITED_PRICE:,} تومان\n\n🏷 کد تخفیف داری؟",
@@ -930,7 +998,7 @@ def handle_stars_type(call):
     bot.answer_callback_query(call.id, "✅")
     _checkout_cache[user_id] = {
         "kind": "stars", "product": f"⭐ استارز {count} عددی برای @{target}",
-        "base_amount": price, "tracking_prefix": "STAR"
+        "base_amount": price, "tracking_prefix": "STAR", "plan_key": "stars"
     }
     safe_edit(call.message.chat.id, call.message.message_id,
               f"📦 <b>استارز {count} عددی</b>\n💰 مبلغ پایه: {price:,} تومان\n\n🏷 کد تخفیف داری؟",
@@ -950,7 +1018,7 @@ def get_stars_other(message, count):
     price = count * STARS_PRICE
     _checkout_cache[message.from_user.id] = {
         "kind": "stars", "product": f"⭐ استارز {count} عددی برای @{username}",
-        "base_amount": price, "tracking_prefix": "STAR"
+        "base_amount": price, "tracking_prefix": "STAR", "plan_key": "stars"
     }
     bot.send_message(message.chat.id,
                       f"📦 <b>استارز {count} عددی برای @{username}</b>\n💰 مبلغ پایه: {price:,} تومان\n\n🏷 کد تخفیف داری؟",
@@ -964,12 +1032,34 @@ def show_wallet(chat_id, user_id):
     if not user:
         bot.send_message(chat_id, "❌ خطا در دریافت اطلاعات. لطفاً /start رو بزن.")
         return
+
     balance = user["wallet_balance"]
+
+    last_transaction = None
+    try:
+        res = db.table("wallet_transactions").select("*").eq("telegram_id", user_id).order("created_at", desc=True).limit(1).execute()
+        if res.data:
+            last_transaction = res.data[0]
+    except Exception as e:
+        log.error(f"خطا در دریافت آخرین تراکنش: {e}")
+
+    text = f"""👛 <b>کیف پول من</b>
+━━━━━━━━━━━━━━
+💰 موجودی: {balance:,} تومان
+━━━━━━━━━━━━━━
+📆 تاریخ امروز: {now_jalali()}
+━━━━━━━━━━━━━━"""
+
+    if last_transaction:
+        try:
+            jalali_date = to_jalali(last_transaction["created_at"])
+            text += f"\n🔄 آخرین تراکنش:\n{jalali_date} — {last_transaction['amount']:,} تومان"
+        except:
+            pass
+
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(InlineKeyboardButton("➕ شارژ کیف پول", callback_data="wallet_topup"))
-    bot.send_message(chat_id, f"""👛 <b>کیف پول شما</b>
-━━━━━━━━━━━━━━
-💰 موجودی: {balance:,} تومان""", reply_markup=keyboard, parse_mode="HTML")
+    bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: call.data == "wallet_topup")
 def wallet_topup(call):
@@ -1059,7 +1149,8 @@ def show_my_orders(chat_id, user_id):
     text = "📦 <b>سفارش‌های شما</b>\n━━━━━━━━━━━━━━\n\n"
     for o in orders:
         status = status_labels.get(o["status"], o["status"])
-        text += f"🔖 <code>{o['tracking_code']}</code>\n{o['product']}\n{o['final_amount']:,} تومان · {status}\n\n"
+        created = to_jalali(o["created_at"]) if o.get("created_at") else "—"
+        text += f"🔖 <code>{o['tracking_code']}</code>\n{o['product']}\n{o['final_amount']:,} تومان · {status}\n📅 {created}\n\n"
     bot.send_message(chat_id, text, parse_mode="HTML")
 
 # ============================================================
@@ -1080,32 +1171,37 @@ def show_my_account(chat_id, user_id):
         orders_count = 0
         delivered_count = 0
 
+    try:
+        referral_count = len(db.table("app_users").select("telegram_id").eq("referred_by", user_id).execute().data)
+    except Exception as e:
+        log.error(f"خطا در شمارش زیرمجموعه‌ها: {e}")
+        referral_count = 0
+
     join_date = "—"
     if user.get("created_at"):
-        join_date = user["created_at"][:16].replace("T", " ")
+        join_date = to_jalali(user["created_at"])
 
-    text = f"""👤 <b>حساب من</b>
-━━━━━━━━━━━━━━
+    username = user.get("username") or "ندارد"
+    phone_status = "🔴 ارسال نشده است 🔴"
+    user_group = "عادی"
 
-🆔 آیدی عددی شما
-<code>{user_id}</code>
+    text = f"""🤖 اطلاعات حساب کاربری شما :
 
-👛 موجودی کیف پول
-{user['wallet_balance']:,} تومان
+🪪 شناسه کاربری: <code>{user_id}</code>
+👤 نام: {username}
+📱 شماره تماس: {phone_status}
+⌚️ زمان ثبت‌نام: {join_date}
+💰 موجودی: {user['wallet_balance']:,} تومان
+🛒 تعداد سرویس‌های خریداری‌شده: {delivered_count} عدد
+📑 تعداد فاکتورهای پرداخت‌شده: {orders_count} عدد
+🤝 تعداد زیرمجموعه‌های شما: {referral_count} نفر
+🔖 گروه کاربری: {user_group}
 
-📅 تاریخ عضویت
-{join_date}
 
-📦 تعداد سفارش‌ها
-{orders_count} کل — {delivered_count} تحویل‌شده
 
-━━━━━━━━━━━━━━
-🌐 <b>ورود به پنل سایت</b>
 
-آیدی بالا رو توی سایت وارد کن:
-{WEBSITE}
+📆 {now_jalali()}"""
 
-یه کد ۶ رقمی همینجا برات ارسال می‌شه؛ اون کد رو توی سایت بزن تا وارد پنلت بشی."""
     bot.send_message(chat_id, text, parse_mode="HTML")
 
 # ============================================================
@@ -1273,7 +1369,7 @@ def send_server_to_user(message, order_id, user_id):
 ━━━━━━━━━━━━━━
 📦 {order['product']}
 🔖 {order['tracking_code']}
-📅 خرید: {order['created_at'][:16]}
+📅 خرید: {to_jalali(order['created_at'])}
 ⏳ انقضا: {expiry_date}
 ━━━━━━━━━━━━━━
 🌐 اطلاعات سرور:
@@ -1290,7 +1386,7 @@ def send_server_to_user(message, order_id, user_id):
 ━━━━━━━━━━━━━━
 📦 {order['product']}
 🔖 {order['tracking_code']}
-📅 خرید: {order['created_at'][:16]}
+📅 خرید: {to_jalali(order['created_at'])}
 ⏳ انقضا: {expiry_date}
 ━━━━━━━━━━━━━━
 🌐 اطلاعات سرور:
@@ -1322,6 +1418,60 @@ def reject_order_cb(call):
         log.warning(f"edit_message_caption failed: {e}")
 
 # ============================================================
+# گزینه تحویل سرور
+# ============================================================
+def show_pending_deliveries(chat_id):
+    try:
+        res = db.table("orders").select("*").eq("status", "confirmed").order("created_at", desc=True).limit(50).execute()
+        orders = res.data
+    except Exception as e:
+        log.error(f"خطا در دریافت سفارشات تایید شده: {e}")
+        orders = []
+
+    if not orders:
+        bot.send_message(chat_id, "📤 هیچ سفارش تایید شده‌ای برای تحویل وجود ندارد.")
+        return
+
+    text = "📤 <b>سفارشات تایید شده - در انتظار تحویل</b>\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for o in orders:
+        created = to_jalali(o['created_at']) if o.get('created_at') else "—"
+        text += f"🔖 <code>{o['tracking_code']}</code>\n"
+        text += f"🆔 کاربر: <code>{o['telegram_id']}</code>\n"
+        text += f"📦 {o['product']}\n"
+        text += f"💰 {o['final_amount']:,} تومان\n"
+        text += f"📅 {created}\n"
+        text += "━━━━━━━━━━━━━━━━━━━━━\n"
+
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for o in orders[:10]:
+        keyboard.add(InlineKeyboardButton(
+            f"📤 تحویل {o['tracking_code']}",
+            callback_data=f"deliver_{o['id']}_{o['telegram_id']}"
+        ))
+    keyboard.add(InlineKeyboardButton("🔙 برگشت", callback_data="back"))
+
+    bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("deliver_"))
+def deliver_from_pending(call):
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+
+    parts = call.data.split("_")
+    order_id = int(parts[1])
+    user_id = int(parts[2])
+
+    order = get_order(order_id)
+    if not order:
+        bot.answer_callback_query(call.id, "❌ سفارش یافت نشد!")
+        return
+
+    bot.answer_callback_query(call.id, "📤")
+    msg = bot.send_message(call.message.chat.id, f"📤 لطفاً سرور رو برای سفارش {order['tracking_code']} ارسال کن:")
+    bot.register_next_step_handler(msg, send_server_to_user, order_id, user_id)
+
+# ============================================================
 # پنل ادمین
 # ============================================================
 def show_pending_orders(chat_id):
@@ -1337,7 +1487,8 @@ def show_pending_orders(chat_id):
         return
     text = "📋 <b>سفارشات در انتظار</b>\n━━━━━━━━━━━━━━\n\n"
     for o in orders:
-        text += f"🆔 {o['telegram_id']}\n{o['product']}\n{o['final_amount']:,} تومان · 🔖 {o['tracking_code']}\n\n"
+        created = to_jalali(o['created_at']) if o.get('created_at') else "—"
+        text += f"🆔 <code>{o['telegram_id']}</code>\n{o['product']}\n{o['final_amount']:,} تومان · 🔖 {o['tracking_code']}\n📅 {created}\n\n"
     bot.send_message(chat_id, text, parse_mode="HTML")
 
 def show_users_list(chat_id):
@@ -1353,7 +1504,9 @@ def show_users_list(chat_id):
     for i, u in enumerate(users[:20], 1):
         status = "🚫" if u["is_banned"] else "✅"
         uname = u.get("username")
-        text += f"{i}. {status} {u['telegram_id']}" + (f" (@{uname})" if uname else "") + f" | 👛 {u['wallet_balance']:,}\n"
+        level = "عادی"
+        created = to_jalali(u['created_at']) if u.get('created_at') else "—"
+        text += f"{i}. {status} <code>{u['telegram_id']}</code>" + (f" (@{uname})" if uname else "") + f" | 👛 {u['wallet_balance']:,} | 🏷 {level}\n📅 {created}\n"
     bot.send_message(chat_id, text, parse_mode="HTML")
 
 def show_stats(chat_id):
@@ -1381,7 +1534,7 @@ def show_stats(chat_id):
 👛 کل شارژ کیف پول: {topup_total:,} تومان
 ⏳ در انتظار: {pending_count}
 ━━━━━━━━━━━━━━
-📅 {datetime.now().strftime("%Y-%m-%d %H:%M")}""", parse_mode="HTML")
+📅 {now_jalali()}""", parse_mode="HTML")
 
 def broadcast_message(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -1447,10 +1600,894 @@ def cb_do_unban(call):
     safe_edit(call.message.chat.id, call.message.message_id, f"✅ کاربر {target} آنبن شد.")
 
 # ============================================================
+# تعیین سطح کاربر
+# ============================================================
+def ask_user_level_target(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    if intercept_flow_restart(message):
+        return
+    
+    target = (message.text or "").strip()
+    if not target.isdigit():
+        bot.reply_to(message, "❌ آیدی باید عددی باشه.")
+        return
+    
+    user = get_user(int(target))
+    if not user:
+        bot.reply_to(message, "❌ کاربر پیدا نشد!")
+        return
+    
+    current_level = "عادی"
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🟢 عادی", callback_data=f"setlevel_{target}_عادی"),
+        InlineKeyboardButton("🟡 نقره‌ای", callback_data=f"setlevel_{target}_نقره‌ای"),
+        InlineKeyboardButton("🔵 طلایی", callback_data=f"setlevel_{target}_طلایی"),
+        InlineKeyboardButton("🟣 ویژه", callback_data=f"setlevel_{target}_ویژه")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 انصراف", callback_data="back"))
+    
+    bot.reply_to(
+        message, 
+        f"👤 کاربر: <code>{target}</code>\n"
+        f"📊 سطح فعلی: {current_level}\n\n"
+        f"سطح جدید رو انتخاب کن:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("setlevel_"))
+def set_user_level(call):
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    parts = call.data.split("_")
+    target_id = int(parts[1])
+    new_level = parts[2]
+    
+    try:
+        db.table("app_users").update({"user_level": new_level}).eq("telegram_id", target_id).execute()
+        
+        if target_id in _user_cache:
+            _user_cache[target_id]["user_level"] = new_level
+        
+        bot.answer_callback_query(call.id, f"✅ سطح به {new_level} تغییر کرد!")
+        
+        safe_edit(
+            call.message.chat.id, 
+            call.message.message_id, 
+            f"✅ سطح کاربر {target_id} به «{new_level}» تغییر کرد."
+        )
+        
+        try:
+            bot.send_message(
+                target_id,
+                f"🔔 سطح کاربری شما توسط ادمین به «{new_level}» تغییر یافت."
+            )
+        except:
+            pass
+            
+    except Exception as e:
+        log.error(f"خطا در تغییر سطح کاربر: {e}")
+        bot.answer_callback_query(call.id, "❌ خطا در تغییر سطح!")
+
+# ============================================================
+# مدیریت موجودی کاربر (افزایش/کاهش/صفر کردن)
+# ============================================================
+def ask_wallet_manage_user(message):
+    """دریافت آیدی کاربر برای مدیریت موجودی"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    if intercept_flow_restart(message):
+        return
+    
+    target = (message.text or "").strip()
+    if not target.isdigit():
+        bot.reply_to(message, "❌ آیدی باید عددی باشه.")
+        return
+    
+    user = get_user(int(target))
+    if not user:
+        bot.reply_to(message, "❌ کاربر پیدا نشد!")
+        return
+    
+    # ذخیره آیدی کاربر برای مرحله بعد
+    _discount_builder[message.from_user.id] = {"manage_user": int(target)}
+    
+    # نمایش موجودی فعلی و گزینه‌های عملیات
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("➕ افزایش", callback_data=f"wallet_add_{target}"),
+        InlineKeyboardButton("➖ کاهش", callback_data=f"wallet_sub_{target}"),
+        InlineKeyboardButton("🔄 صفر کردن", callback_data=f"wallet_zero_{target}")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 انصراف", callback_data="back"))
+    
+    bot.reply_to(
+        message,
+        f"👤 کاربر: <code>{target}</code>\n"
+        f"💰 موجودی فعلی: {user['wallet_balance']:,} تومان\n\n"
+        f"عملیات مورد نظر رو انتخاب کن:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_add_"))
+def wallet_add_amount(call):
+    """دریافت مبلغ برای افزایش موجودی"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    target_id = int(call.data.replace("wallet_add_", ""))
+    user = get_user(target_id)
+    if not user:
+        bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
+        return
+    
+    bot.answer_callback_query(call.id, "➕")
+    
+    # ذخیره آیدی و نوع عملیات
+    _discount_builder[call.from_user.id] = {
+        "manage_user": target_id,
+        "action": "add"
+    }
+    
+    msg = bot.send_message(
+        call.message.chat.id,
+        f"👤 کاربر: <code>{target_id}</code>\n"
+        f"💰 موجودی فعلی: {user['wallet_balance']:,} تومان\n\n"
+        f"✏️ مبلغ افزایش رو به تومان وارد کن:\n"
+        f"(مثلاً 50000 برای ۵۰ هزار تومان)",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(msg, process_wallet_add)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_sub_"))
+def wallet_sub_amount(call):
+    """دریافت مبلغ برای کاهش موجودی"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    target_id = int(call.data.replace("wallet_sub_", ""))
+    user = get_user(target_id)
+    if not user:
+        bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
+        return
+    
+    bot.answer_callback_query(call.id, "➖")
+    
+    # ذخیره آیدی و نوع عملیات
+    _discount_builder[call.from_user.id] = {
+        "manage_user": target_id,
+        "action": "sub"
+    }
+    
+    msg = bot.send_message(
+        call.message.chat.id,
+        f"👤 کاربر: <code>{target_id}</code>\n"
+        f"💰 موجودی فعلی: {user['wallet_balance']:,} تومان\n\n"
+        f"✏️ مبلغ کاهش رو به تومان وارد کن:\n"
+        f"(مثلاً 30000 برای ۳۰ هزار تومان)",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(msg, process_wallet_sub)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_zero_"))
+def wallet_zero_confirm(call):
+    """تایید صفر کردن موجودی"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    target_id = int(call.data.replace("wallet_zero_", ""))
+    user = get_user(target_id)
+    if not user:
+        bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
+        return
+    
+    current_balance = user['wallet_balance']
+    
+    if current_balance == 0:
+        bot.answer_callback_query(call.id, "❌ موجودی در حال حاضر صفر است!")
+        safe_edit(
+            call.message.chat.id,
+            call.message.message_id,
+            f"⚠️ موجودی کاربر <code>{target_id}</code> در حال حاضر صفر است.",
+            parse_mode="HTML"
+        )
+        return
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("✅ بله، صفر کن", callback_data=f"wallet_zero_confirm_{target_id}"),
+        InlineKeyboardButton("❌ انصراف", callback_data="back")
+    )
+    
+    safe_edit(
+        call.message.chat.id,
+        call.message.message_id,
+        f"⚠️ <b>هشدار! صفر کردن موجودی</b>\n\n"
+        f"👤 کاربر: <code>{target_id}</code>\n"
+        f"💰 موجودی فعلی: {current_balance:,} تومان\n\n"
+        f"آیا مطمئنی که می‌خوای موجودی این کاربر رو صفر کنی؟",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("wallet_zero_confirm_"))
+def wallet_zero_execute(call):
+    """اجرای صفر کردن موجودی"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    target_id = int(call.data.replace("wallet_zero_confirm_", ""))
+    user = get_user(target_id)
+    if not user:
+        bot.answer_callback_query(call.id, "❌ کاربر پیدا نشد!")
+        return
+    
+    current_balance = user['wallet_balance']
+    
+    if current_balance == 0:
+        bot.answer_callback_query(call.id, "❌ موجودی در حال حاضر صفر است!")
+        return
+    
+    # صفر کردن موجودی (کاهش به اندازه موجودی فعلی)
+    new_balance = adjust_wallet(target_id, -current_balance, "admin_zero_wallet")
+    
+    if new_balance is not None:
+        bot.answer_callback_query(call.id, "✅ موجودی صفر شد!")
+        
+        safe_edit(
+            call.message.chat.id,
+            call.message.message_id,
+            f"✅ <b>موجودی با موفقیت صفر شد!</b>\n\n"
+            f"👤 کاربر: <code>{target_id}</code>\n"
+            f"💰 مبلغ حذف شده: {current_balance:,} تومان\n"
+            f"💰 موجودی جدید: 0 تومان",
+            parse_mode="HTML"
+        )
+        
+        # ارسال پیام به کاربر
+        try:
+            bot.send_message(
+                target_id,
+                f"⚠️ <b>موجودی کیف پول شما صفر شد!</b>\n\n"
+                f"مبلغ {current_balance:,} تومان از کیف پول شما حذف شد.\n"
+                f"💰 موجودی جدید: 0 تومان",
+                parse_mode="HTML"
+            )
+        except telebot.apihelper.ApiTelegramException:
+            pass
+    else:
+        bot.answer_callback_query(call.id, "❌ خطا!")
+
+
+def process_wallet_add(message):
+    """پردازش افزایش موجودی"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    
+    if intercept_flow_restart(message):
+        return
+    
+    data = _discount_builder.get(message.from_user.id)
+    if not data or "manage_user" not in data or data.get("action") != "add":
+        bot.reply_to(message, "❌ خطا! دوباره از ابتدا تلاش کن.")
+        return
+    
+    target_id = data["manage_user"]
+    
+    try:
+        amount = int(message.text.strip())
+        if amount <= 0:
+            raise ValueError
+    except:
+        msg = bot.reply_to(
+            message,
+            "❌ لطفاً یک عدد معتبر (بزرگتر از صفر) به تومان وارد کن:"
+        )
+        bot.register_next_step_handler(msg, process_wallet_add)
+        return
+    
+    # افزایش موجودی
+    new_balance = adjust_wallet(target_id, amount, "admin_add_wallet")
+    
+    if new_balance is not None:
+        # حذف اطلاعات موقت
+        del _discount_builder[message.from_user.id]
+        
+        # ارسال پیام تایید به ادمین
+        bot.reply_to(
+            message,
+            f"✅ <b>افزایش موجودی با موفقیت انجام شد!</b>\n\n"
+            f"👤 کاربر: <code>{target_id}</code>\n"
+            f"💰 مبلغ افزایش: {amount:,} تومان\n"
+            f"💰 موجودی جدید: {new_balance:,} تومان",
+            parse_mode="HTML"
+        )
+        
+        # ارسال پیام به کاربر
+        try:
+            bot.send_message(
+                target_id,
+                f"💰 <b>موجودی کیف پول شما افزایش یافت!</b>\n\n"
+                f"مبلغ {amount:,} تومان به کیف پول شما اضافه شد.\n"
+                f"💰 موجودی جدید: {new_balance:,} تومان",
+                parse_mode="HTML"
+            )
+        except telebot.apihelper.ApiTelegramException:
+            bot.reply_to(message, "⚠️ ارسال پیام به کاربر ممکن نشد (کاربر ربات رو بلاک کرده).")
+    else:
+        bot.reply_to(message, "❌ خطا در افزایش موجودی!")
+
+
+def process_wallet_sub(message):
+    """پردازش کاهش موجودی"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    
+    if intercept_flow_restart(message):
+        return
+    
+    data = _discount_builder.get(message.from_user.id)
+    if not data or "manage_user" not in data or data.get("action") != "sub":
+        bot.reply_to(message, "❌ خطا! دوباره از ابتدا تلاش کن.")
+        return
+    
+    target_id = data["manage_user"]
+    user = get_user(target_id)
+    current_balance = user["wallet_balance"] if user else 0
+    
+    try:
+        amount = int(message.text.strip())
+        if amount <= 0:
+            raise ValueError
+        if amount > current_balance:
+            bot.reply_to(
+                message,
+                f"❌ موجودی کاربر ({current_balance:,} تومان) کمتر از مبلغ مورد نظر است!\n"
+                f"لطفاً مبلغ کمتری وارد کن:"
+            )
+            bot.register_next_step_handler(message, process_wallet_sub)
+            return
+    except:
+        msg = bot.reply_to(
+            message,
+            f"❌ لطفاً یک عدد معتبر (بزرگتر از صفر و کمتر از {current_balance:,}) به تومان وارد کن:"
+        )
+        bot.register_next_step_handler(msg, process_wallet_sub)
+        return
+    
+    # کاهش موجودی
+    new_balance = adjust_wallet(target_id, -amount, "admin_sub_wallet")
+    
+    if new_balance is not None:
+        # حذف اطلاعات موقت
+        del _discount_builder[message.from_user.id]
+        
+        # ارسال پیام تایید به ادمین
+        bot.reply_to(
+            message,
+            f"✅ <b>کاهش موجودی با موفقیت انجام شد!</b>\n\n"
+            f"👤 کاربر: <code>{target_id}</code>\n"
+            f"💰 مبلغ کاهش: {amount:,} تومان\n"
+            f"💰 موجودی جدید: {new_balance:,} تومان",
+            parse_mode="HTML"
+        )
+        
+        # ارسال پیام به کاربر
+        try:
+            bot.send_message(
+                target_id,
+                f"⚠️ <b>موجودی کیف پول شما کاهش یافت!</b>\n\n"
+                f"مبلغ {amount:,} تومان از کیف پول شما کسر شد.\n"
+                f"💰 موجودی جدید: {new_balance:,} تومان",
+                parse_mode="HTML"
+            )
+        except telebot.apihelper.ApiTelegramException:
+            bot.reply_to(message, "⚠️ ارسال پیام به کاربر ممکن نشد (کاربر ربات رو بلاک کرده).")
+    else:
+        bot.reply_to(message, "❌ خطا در کاهش موجودی!")
+
+
+# ============================================================
+# مدیریت کد تخفیف
+# ============================================================
+def show_discount_menu(chat_id):
+    """نمایش منوی مدیریت کد تخفیف"""
+    bot.send_message(
+        chat_id,
+        "🏷 <b>مدیریت کدهای تخفیف</b>\n\n"
+        "یکی از گزینه‌های زیر رو انتخاب کن:",
+        reply_markup=discount_management_keyboard(),
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "discount_create")
+def discount_create_start(call):
+    """شروع فرآیند ساخت کد تخفیف"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    bot.answer_callback_query(call.id, "➕")
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🇫🇷 فرانسه", callback_data="discount_plan_france"),
+        InlineKeyboardButton("🌍 مولتی", callback_data="discount_plan_multi"),
+        InlineKeyboardButton("🚀 نامحدود", callback_data="discount_plan_unlimited"),
+        InlineKeyboardButton("⭐ استارز", callback_data="discount_plan_stars"),
+        InlineKeyboardButton("🎯 همه موارد", callback_data="discount_plan_all")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 انصراف", callback_data="back"))
+    
+    safe_edit(
+        call.message.chat.id,
+        call.message.message_id,
+        "🏷 <b>ساخت کد تخفیف جدید</b>\n\n"
+        "مرحله ۱: انتخاب سرویس مورد نظر برای تخفیف:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("discount_plan_"))
+def discount_select_plan(call):
+    """انتخاب پلن برای کد تخفیف"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    plan = call.data.replace("discount_plan_", "")
+    user_id = call.from_user.id
+    
+    _discount_builder[user_id] = {"plan": plan}
+    
+    plan_names = {
+        "france": "🇫🇷 سرور فرانسه",
+        "multi": "🌍 سرور مولتی",
+        "unlimited": "🚀 سرور نامحدود",
+        "stars": "⭐ استارز",
+        "all": "🎯 همه موارد"
+    }
+    
+    bot.answer_callback_query(call.id, f"✅ {plan_names.get(plan, plan)}")
+    
+    msg = bot.send_message(
+        call.message.chat.id,
+        f"🏷 <b>ساخت کد تخفیف</b>\n\n"
+        f"📌 سرویس انتخاب شده: {plan_names.get(plan, plan)}\n\n"
+        f"مرحله ۲: درصد تخفیف رو وارد کن (مثلاً ۲۰ برای ۲۰٪):\n"
+        f"(فقط عدد بین ۱ تا ۱۰۰)",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(msg, discount_get_percent, user_id)
+
+def discount_get_percent(message, user_id):
+    """دریافت درصد تخفیف"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    
+    if intercept_flow_restart(message):
+        return
+    
+    try:
+        percent = int(message.text.strip())
+        if percent < 1 or percent > 100:
+            raise ValueError
+    except:
+        msg = bot.reply_to(
+            message,
+            "❌ لطفاً یک عدد بین ۱ تا ۱۰۰ وارد کن:"
+        )
+        bot.register_next_step_handler(msg, discount_get_percent, user_id)
+        return
+    
+    _discount_builder[user_id]["percent"] = percent
+    
+    msg = bot.reply_to(
+        message,
+        f"🏷 <b>ساخت کد تخفیف</b>\n\n"
+        f"✅ درصد تخفیف: {percent}٪\n\n"
+        f"مرحله ۳: مدت اعتبار کد رو به روز وارد کن:\n"
+        f"(مثلاً ۳۰ برای ۳۰ روز)\n"
+        f"(۰ = نامحدود)",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(msg, discount_get_days, user_id)
+
+def discount_get_days(message, user_id):
+    """دریافت مدت اعتبار کد تخفیف"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    
+    if intercept_flow_restart(message):
+        return
+    
+    try:
+        days = int(message.text.strip())
+        if days < 0:
+            raise ValueError
+    except:
+        msg = bot.reply_to(
+            message,
+            "❌ لطفاً یک عدد معتبر وارد کن (۰ برای نامحدود):"
+        )
+        bot.register_next_step_handler(msg, discount_get_days, user_id)
+        return
+    
+    _discount_builder[user_id]["days"] = days
+    
+    msg = bot.reply_to(
+        message,
+        f"🏷 <b>ساخت کد تخفیف</b>\n\n"
+        f"✅ درصد تخفیف: {_discount_builder[user_id]['percent']}٪\n"
+        f"✅ مدت اعتبار: {days if days > 0 else 'نامحدود'} روز\n\n"
+        f"مرحله ۴: حداکثر تعداد استفاده رو وارد کن:\n"
+        f"(مثلاً ۱۰۰)\n"
+        f"(۰ = نامحدود)",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(msg, discount_get_max_uses, user_id)
+
+def discount_get_max_uses(message, user_id):
+    """دریافت حداکثر تعداد استفاده"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    
+    if intercept_flow_restart(message):
+        return
+    
+    try:
+        max_uses = int(message.text.strip())
+        if max_uses < 0:
+            raise ValueError
+    except:
+        msg = bot.reply_to(
+            message,
+            "❌ لطفاً یک عدد معتبر وارد کن (۰ برای نامحدود):"
+        )
+        bot.register_next_step_handler(msg, discount_get_max_uses, user_id)
+        return
+    
+    _discount_builder[user_id]["max_uses"] = max_uses
+    
+    data = _discount_builder[user_id]
+    plan_names = {
+        "france": "🇫🇷 سرور فرانسه",
+        "multi": "🌍 سرور مولتی",
+        "unlimited": "🚀 سرور نامحدود",
+        "stars": "⭐ استارز",
+        "all": "🎯 همه موارد"
+    }
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("✅ تایید و ساخت", callback_data=f"discount_confirm_{user_id}"),
+        InlineKeyboardButton("❌ لغو", callback_data="back")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        f"🏷 <b>تایید نهایی کد تخفیف</b>\n\n"
+        f"📌 سرویس: {plan_names.get(data['plan'], data['plan'])}\n"
+        f"🎯 درصد تخفیف: {data['percent']}٪\n"
+        f"📅 مدت اعتبار: {data['days'] if data['days'] > 0 else 'نامحدود'} روز\n"
+        f"🔢 حداکثر استفاده: {data['max_uses'] if data['max_uses'] > 0 else 'نامحدود'}\n\n"
+        f"آیا اطلاعات صحیح است؟",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("discount_confirm_"))
+def discount_confirm(call):
+    """تایید و ذخیره کد تخفیف در دیتابیس"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    user_id = int(call.data.replace("discount_confirm_", ""))
+    data = _discount_builder.get(user_id)
+    
+    if not data:
+        bot.answer_callback_query(call.id, "❌ اطلاعات یافت نشد!")
+        return
+    
+    code = f"VIP{gen_code(8)}"
+    
+    expires_at = None
+    if data['days'] > 0:
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=data['days'])).isoformat()
+    
+    try:
+        db.table("discount_codes").insert({
+            "code": code,
+            "percent": data['percent'],
+            "plan": data['plan'],
+            "max_uses": data['max_uses'] if data['max_uses'] > 0 else None,
+            "expires_at": expires_at,
+            "active": True,
+            "used_count": 0
+        }).execute()
+        
+        del _discount_builder[user_id]
+        
+        bot.answer_callback_query(call.id, "✅ کد تخفیف ساخته شد!")
+        
+        safe_edit(
+            call.message.chat.id,
+            call.message.message_id,
+            f"✅ <b>کد تخفیف با موفقیت ساخته شد!</b>\n\n"
+            f"🔖 کد تخفیف: <code>{code}</code>\n"
+            f"🎯 درصد: {data['percent']}٪\n"
+            f"📌 سرویس: {data['plan']}\n"
+            f"📅 اعتبار: {data['days'] if data['days'] > 0 else 'نامحدود'} روز\n"
+            f"🔢 حداکثر استفاده: {data['max_uses'] if data['max_uses'] > 0 else 'نامحدود'}\n\n"
+            f"💡 کاربران می‌تونن با وارد کردن این کد از تخفیف استفاده کنن.",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        log.error(f"خطا در ساخت کد تخفیف: {e}")
+        bot.answer_callback_query(call.id, "❌ خطا در ساخت کد!")
+
+@bot.callback_query_handler(func=lambda call: call.data == "discount_list")
+def discount_list(call):
+    """نمایش لیست کدهای تخفیف"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    bot.answer_callback_query(call.id)
+    
+    try:
+        res = db.table("discount_codes").select("*").order("created_at", desc=True).limit(30).execute()
+        codes = res.data
+    except Exception as e:
+        log.error(f"خطا در دریافت لیست کدهای تخفیف: {e}")
+        codes = []
+    
+    if not codes:
+        safe_edit(
+            call.message.chat.id,
+            call.message.message_id,
+            "📋 هیچ کد تخفیفی وجود ندارد.\n\n"
+            "از دکمه «➕ ساخت کد جدید» استفاده کن.",
+            reply_markup=discount_management_keyboard()
+        )
+        return
+    
+    plan_names = {
+        "france": "🇫🇷 فرانسه",
+        "multi": "🌍 مولتی",
+        "unlimited": "🚀 نامحدود",
+        "stars": "⭐ استارز",
+        "all": "🎯 همه"
+    }
+    
+    text = "📋 <b>لیست کدهای تخفیف</b>\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for i, c in enumerate(codes[:15], 1):
+        status = "✅ فعال" if c["active"] else "❌ غیرفعال"
+        plan = plan_names.get(c.get("plan", "all"), "همه")
+        used = c.get("used_count", 0)
+        max_uses = c.get("max_uses", "∞") if c.get("max_uses") is not None else "∞"
+        expires = "نامحدود"
+        if c.get("expires_at"):
+            expires = to_jalali(c["expires_at"])[:16]
+        
+        text += f"{i}. 🔖 <code>{c['code']}</code>\n"
+        text += f"   🎯 {c['percent']}٪ | 📌 {plan}\n"
+        text += f"   🔢 {used}/{max_uses} | 📅 {expires}\n"
+        text += f"   {status}\n"
+        text += "━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🔄 بروزرسانی", callback_data="discount_list"),
+        InlineKeyboardButton("🔙 برگشت", callback_data="back")
+    )
+    
+    safe_edit(
+        call.message.chat.id,
+        call.message.message_id,
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "discount_broadcast")
+def discount_broadcast_start(call):
+    """شروع ارسال اطلاع‌رسانی کد تخفیف"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    bot.answer_callback_query(call.id, "📤")
+    
+    try:
+        res = db.table("discount_codes").select("*").eq("active", True).execute()
+        codes = res.data
+    except Exception as e:
+        log.error(f"خطا در دریافت کدهای فعال: {e}")
+        codes = []
+    
+    if not codes:
+        safe_edit(
+            call.message.chat.id,
+            call.message.message_id,
+            "❌ هیچ کد تخفیف فعالی وجود ندارد.\n\n"
+            "ابتدا یک کد تخفیف جدید بساز.",
+            reply_markup=discount_management_keyboard()
+        )
+        return
+    
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for c in codes[:10]:
+        keyboard.add(
+            InlineKeyboardButton(
+                f"🔖 {c['code']} ({c['percent']}٪)",
+                callback_data=f"broadcast_code_{c['code']}"
+            )
+        )
+    keyboard.add(InlineKeyboardButton("🔙 برگشت", callback_data="back"))
+    
+    safe_edit(
+        call.message.chat.id,
+        call.message.message_id,
+        "📤 <b>ارسال اطلاع‌رسانی کد تخفیف</b>\n\n"
+        "کد تخفیفی که می‌خوای به کاربران اطلاع‌رسانی کنی رو انتخاب کن:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("broadcast_code_"))
+def discount_broadcast_send(call):
+    """ارسال اطلاع‌رسانی کد تخفیف به همه کاربران"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    code = call.data.replace("broadcast_code_", "")
+    
+    try:
+        res = db.table("discount_codes").select("*").eq("code", code).execute()
+        if not res.data:
+            bot.answer_callback_query(call.id, "❌ کد یافت نشد!")
+            return
+        discount = res.data[0]
+    except Exception as e:
+        log.error(f"خطا در دریافت اطلاعات کد: {e}")
+        bot.answer_callback_query(call.id, "❌ خطا!")
+        return
+    
+    plan_names = {
+        "france": "🇫🇷 سرور فرانسه",
+        "multi": "🌍 سرور مولتی",
+        "unlimited": "🚀 سرور نامحدود",
+        "stars": "⭐ استارز",
+        "all": "🎯 همه سرویس‌ها"
+    }
+    
+    plan_name = plan_names.get(discount.get("plan", "all"), "همه سرویس‌ها")
+    
+    message_text = f"""🎉 <b>کد تخفیف ویژه</b>
+
+📌 <b>سرویس:</b> {plan_name}
+🎯 <b>تخفیف:</b> {discount['percent']}٪
+🔖 <b>کد:</b> <code>{discount['code']}</code>
+
+💡 <b>نحوه استفاده:</b>
+هنگام خرید، کد تخفیف رو وارد کن تا {discount['percent']}٪ تخفیف بگیری!
+
+📅 <b>مدت اعتبار:</b> {'نامحدود' if not discount.get('expires_at') else to_jalali(discount['expires_at'])[:16]}
+🔢 <b>تعداد باقیمانده:</b> {'نامحدود' if discount.get('max_uses') is None else discount['max_uses'] - discount['used_count']}
+
+🚀 همین حالا استفاده کن!"""
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("✅ ارسال به همه", callback_data=f"send_broadcast_{code}"),
+        InlineKeyboardButton("❌ لغو", callback_data="back")
+    )
+    
+    safe_edit(
+        call.message.chat.id,
+        call.message.message_id,
+        f"📤 <b>پیش‌نمایش پیام</b>\n\n"
+        f"{message_text}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ این پیام به <b>همه کاربران</b> ارسال خواهد شد.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("send_broadcast_"))
+def discount_broadcast_execute(call):
+    """اجرای ارسال اطلاع‌رسانی به همه کاربران"""
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!")
+        return
+    
+    code = call.data.replace("send_broadcast_", "")
+    bot.answer_callback_query(call.id, "📤 در حال ارسال...")
+    
+    try:
+        res = db.table("discount_codes").select("*").eq("code", code).execute()
+        if not res.data:
+            bot.answer_callback_query(call.id, "❌ کد یافت نشد!")
+            return
+        discount = res.data[0]
+    except Exception as e:
+        log.error(f"خطا در دریافت اطلاعات کد: {e}")
+        bot.answer_callback_query(call.id, "❌ خطا!")
+        return
+    
+    plan_names = {
+        "france": "🇫🇷 سرور فرانسه",
+        "multi": "🌍 سرور مولتی",
+        "unlimited": "🚀 سرور نامحدود",
+        "stars": "⭐ استارز",
+        "all": "🎯 همه سرویس‌ها"
+    }
+    
+    plan_name = plan_names.get(discount.get("plan", "all"), "همه سرویس‌ها")
+    
+    message_text = f"""🎉 <b>کد تخفیف ویژه</b>
+
+📌 <b>سرویس:</b> {plan_name}
+🎯 <b>تخفیف:</b> {discount['percent']}٪
+🔖 <b>کد:</b> <code>{discount['code']}</code>
+
+💡 <b>نحوه استفاده:</b>
+هنگام خرید، کد تخفیف رو وارد کن تا {discount['percent']}٪ تخفیف بگیری!
+
+📅 <b>مدت اعتبار:</b> {'نامحدود' if not discount.get('expires_at') else to_jalali(discount['expires_at'])[:16]}
+🔢 <b>تعداد باقیمانده:</b> {'نامحدود' if discount.get('max_uses') is None else discount['max_uses'] - discount['used_count']}
+
+🚀 همین حالا استفاده کن!"""
+    
+    try:
+        users = db.table("app_users").select("telegram_id, is_banned").execute().data
+        targets = [u["telegram_id"] for u in users if not u["is_banned"]]
+    except Exception as e:
+        log.error(f"خطا در دریافت لیست کاربران: {e}")
+        bot.answer_callback_query(call.id, "❌ خطا در دریافت لیست کاربران!")
+        return
+    
+    sent, failed = 0, 0
+    for uid in targets:
+        try:
+            bot.send_message(uid, message_text, parse_mode="HTML")
+            sent += 1
+        except telebot.apihelper.ApiTelegramException:
+            failed += 1
+        time.sleep(0.05)
+    
+    safe_edit(
+        call.message.chat.id,
+        call.message.message_id,
+        f"✅ <b>اطلاع‌رسانی ارسال شد!</b>\n\n"
+        f"📬 موفق: {sent}\n"
+        f"❌ ناموفق: {failed}\n"
+        f"🔖 کد: <code>{code}</code>",
+        parse_mode="HTML"
+    )
+
+# ============================================================
 # سیستم ارسال کد از سایت (OTP Worker)
 # ============================================================
 def otp_worker():
-    """هر ۳ ثانیه چک می‌کنه که سایت درخواست کد جدید داده یا نه."""
     while True:
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
